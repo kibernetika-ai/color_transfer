@@ -1,0 +1,59 @@
+kind: MLApp
+metadata:
+  name: color-transfer
+spec:
+  default_mount_path: /notebooks
+  default_read_only: false
+  package_manager: pip3
+  packages:
+  - manager: pip3
+  tasks:
+  - name: coloring
+    resources:
+    - command: python color.py --input input_image.jpg --palette palette_image.jpg
+      default_volume_mapping: true
+      images:
+        cpu: kuberlab/mlbase:cpu-36-full
+        gpu: kuberlab/mlbase:gpu-36-full
+      name: worker
+      replicas: 1
+      resources:
+        limits:
+          cpu: "1"
+          memory: 8Gi
+        requests:
+          cpu: 100m
+          memory: 64Mi
+      restartPolicy: Never
+      workDir: $SRC_DIR
+  uix:
+  - default_volume_mapping: true
+    displayName: Jupyter
+    images:
+      cpu: kuberlab/mlbase:cpu-36-full
+    name: jupyter
+    ports:
+    - name: http
+      port: 8888
+      protocol: TCP
+      targetPort: 8888
+    resources:
+      limits:
+        cpu: "1"
+        memory: 4Gi
+      requests:
+        cpu: 100m
+        memory: 64Mi
+  volumes:
+  - clusterStorage: '{{ .storage.value }}'
+    name: training
+  - gitRepo:
+      repository: https://github.com/kibernetika-ai/color_transfer
+    name: src
+  - clusterStorage: '{{ .storage.value }}'
+    isLibDir: true
+    name: lib
+  - clusterStorage: '{{ .storage.value }}'
+    mountPath: /notebooks
+    name: code
+    subPath: code

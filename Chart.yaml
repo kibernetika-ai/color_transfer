@@ -1,0 +1,14 @@
+Description: Color transfer
+Engine: gotpl
+Home: https://kuberlab.com
+Keywords:
+- kuberlab
+- color-transfer
+- tensorflow
+- coloring
+Maintainers:
+- Email: support@kuberlab.com
+  Name: kuberlab
+Name: color-transfer
+Type: mlapp-v2
+Version: 1.0.0
