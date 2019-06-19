@@ -1,6 +1,8 @@
 import argparse
 import logging
 import os
+import signal
+import subprocess
 
 import cv2
 import numpy as np
@@ -25,6 +27,7 @@ def parse_args():
         "-i", "--input", required=True,
         help="Path to input image / video"
     )
+
     ap.add_argument(
         "-n", "--frame-num",
         help=(
@@ -33,6 +36,13 @@ def parse_args():
         ),
         type=int,
         default=10,
+        metavar='<int>',
+    )
+    ap.add_argument(
+        "--each-frame",
+        help="Process only each N frame. Reduces fps of video and stream accordingly.",
+        type=int,
+        default=1,
         metavar='<int>',
     )
     ap.add_argument(
@@ -81,7 +91,52 @@ def is_image(filename):
     return ext in ['.jpg', '.jpeg', '.png', '.bmp', '.gif']
 
 
-def process_video(input, palette, output):
+def start_ffmpeg(width, height, fps, rtmp_url):
+    ffmpeg_binary = 'ffmpeg'
+    command = []
+    command.extend([
+        ffmpeg_binary,
+        '-loglevel', 'verbose',
+        '-y',  # overwrite previous file/stream
+        # '-re',    # native frame-rate
+        '-analyzeduration', '1',
+        '-f', 'rawvideo',
+        '-r', '%d' % fps,  # set a fixed frame rate
+        '-vcodec', 'rawvideo',
+        # size of one frame
+        '-s', '%dx%d' % (width, height),
+        '-pix_fmt', 'rgb24',  # The input are raw bytes
+        '-thread_queue_size', '1024',
+        '-i', '/tmp/videopipe0',  # The input comes from a pipe
+        '-an',            # Tells FFMPEG not to expect any audio
+    ])
+    command.extend([
+        # VIDEO CODEC PARAMETERS
+        '-vcodec', 'libx264',
+        '-r', '%d' % fps,
+        # AUDIO CODEC PARAMETERS
+        '-acodec', 'libmp3lame', '-ar', '44100', '-b:a', '160k',
+        '-ac', '1',
+
+        # NUMBER OF THREADS
+        '-threads', '2',
+
+        # STREAM TO RTMP
+        '-f', 'flv', '%s' % rtmp_url
+    ])
+
+    # devnullpipe = open("/dev/null", "w")  # Throw away stream
+    devnullpipe = None
+    ffmpeg_process = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stderr=devnullpipe,
+        stdout=devnullpipe
+    )
+    return ffmpeg_process
+
+
+def process_video(input, palette, output, scale_fps=1):
     if not output:
         raise RuntimeError("--output must be supplied for video processing")
 
@@ -93,30 +148,48 @@ def process_video(input, palette, output):
 
     fourcc = int(vc.get(cv2.CAP_PROP_FOURCC))
     fps = vc.get(cv2.CAP_PROP_FPS)
+    if scale_fps != 0:
+        fps = fps / scale_fps
     height = int(vc.get(cv2.CAP_PROP_FRAME_HEIGHT))
     width = int(vc.get(cv2.CAP_PROP_FRAME_WIDTH))
 
     if is_rtmp:
         # Open ffmpeg for streaming
-        pass
+        ffmpeg = start_ffmpeg(width, height, fps, output)
+        # Create pipe
+        pipe = '/tmp/videopipe0'
+        if not os.path.exists(pipe):
+            os.mkfifo(pipe)
+        video_pipe = os.open(pipe, os.O_WRONLY)
     else:
         # Open file for writing
         writer = cv2.VideoWriter(output, fourcc, fps, frameSize=(width, height))
 
-    i = 0
+    i = 1
+    processed_i = 0
     while True:
         _, frame = vc.read()
         if frame is None:
             break
         i += 1
+        # Skip frame
+        if scale_fps != 0 and i % scale_fps != 0:
+            continue
 
         processed = color_transfer.color_transfer(palette, frame)
-        if i % 100 == 0:
-            LOG.info("Processed %s frames." % i)
+        processed_i += 1
+        if processed_i % 100 == 0:
+            LOG.info("Processed %s frames." % processed_i)
 
         if is_rtmp:
+            # Convert to RGB
+            processed = processed[:, :, ::-1]
             # Send processed frame to ffmpeg
-            pass
+            try:
+                os.write(video_pipe, processed.tostring())
+            except OSError as e:
+                LOG.error(e)
+                break
         else:
             # write frame
             writer.write(processed)
@@ -124,7 +197,8 @@ def process_video(input, palette, output):
     vc.release()
     if is_rtmp:
         # Close streaming
-        pass
+        ffmpeg.poll()
+        ffmpeg.send_signal(signal.SIGINT)
     else:
         writer.release()
 
@@ -162,4 +236,4 @@ if __name__ == '__main__':
             show_image("Transfer", transfer)
             cv2.waitKey(0)
     else:
-        process_video(args.input, palette, args.output)
+        process_video(args.input, palette, args.output, scale_fps=args.each_frame)
