@@ -165,6 +165,8 @@ def process_video(input, palette, output, scale_fps=1):
         # Open file for writing
         writer = cv2.VideoWriter(output, fourcc, fps, frameSize=(width, height))
 
+    prepared_stats = color_transfer.prepare_for_transfer(palette)
+
     i = 1
     processed_i = 0
     while True:
@@ -176,7 +178,7 @@ def process_video(input, palette, output, scale_fps=1):
         if scale_fps != 0 and i % scale_fps != 0:
             continue
 
-        processed = color_transfer.color_transfer(palette, frame)
+        processed = color_transfer.color_transfer_prepared(prepared_stats, frame)
         processed_i += 1
         if processed_i % 100 == 0:
             LOG.info("Processed %s frames." % processed_i)

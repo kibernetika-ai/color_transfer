@@ -2,6 +2,59 @@
 import numpy as np
 import cv2
 
+
+def prepare_for_transfer(palette):
+	source = cv2.cvtColor(palette, cv2.COLOR_BGR2LAB).astype("float32")
+
+	# compute color statistics for the source and target images
+	(lMeanSrc, lStdSrc, aMeanSrc, aStdSrc, bMeanSrc, bStdSrc) = image_stats(source)
+
+	return lMeanSrc, lStdSrc, aMeanSrc, aStdSrc, bMeanSrc, bStdSrc
+
+
+def color_transfer_prepared(palette_stats, target, clip=True, preserve_paper=True):
+	lMeanSrc, lStdSrc, aMeanSrc, aStdSrc, bMeanSrc, bStdSrc = palette_stats
+
+	target = cv2.cvtColor(target, cv2.COLOR_BGR2LAB).astype("float32")
+	(lMeanTar, lStdTar, aMeanTar, aStdTar, bMeanTar, bStdTar) = image_stats(target)
+
+	# subtract the means from the target image
+	(l, a, b) = cv2.split(target)
+	l -= lMeanTar
+	a -= aMeanTar
+	b -= bMeanTar
+
+	if preserve_paper:
+		# scale by the standard deviations using paper proposed factor
+		l = (lStdTar / lStdSrc) * l
+		a = (aStdTar / aStdSrc) * a
+		b = (bStdTar / bStdSrc) * b
+	else:
+		# scale by the standard deviations using reciprocal of paper proposed factor
+		l = (lStdSrc / lStdTar) * l
+		a = (aStdSrc / aStdTar) * a
+		b = (bStdSrc / bStdTar) * b
+
+	# add in the source mean
+	l += lMeanSrc
+	a += aMeanSrc
+	b += bMeanSrc
+
+	# clip/scale the pixel intensities to [0, 255] if they fall
+	# outside this range
+	l = _scale_array(l, clip=clip)
+	a = _scale_array(a, clip=clip)
+	b = _scale_array(b, clip=clip)
+
+	# merge the channels together and convert back to the RGB color
+	# space, being sure to utilize the 8-bit unsigned integer data
+	# type
+	transfer = cv2.merge([l, a, b])
+	transfer = cv2.cvtColor(transfer.astype("uint8"), cv2.COLOR_LAB2BGR)
+
+	# return the color transferred image
+	return transfer
+
 def color_transfer(source, target, clip=True, preserve_paper=True):
 	"""
 	Transfers the color distribution from the source to the target
@@ -81,6 +134,7 @@ def color_transfer(source, target, clip=True, preserve_paper=True):
 	
 	# return the color transferred image
 	return transfer
+
 
 def image_stats(image):
 	"""
